@@ -1,115 +1,114 @@
 import Foundation
 
 enum requestType: String {
-  case initialize = "/initialize"
-  case logEvent = "/log_event"
+    case initialize = "/initialize"
+    case logEvent = "/log_event"
 }
 
 class StatsigNetworkService {
-  var sdkKey: String
-  var user: StatsigUser
-  var valueStore: InternalStore
-
-  final private let apiURL = "https://api.statsig.com/v1"
-  final private let apiPathInitialize = "/initialize"
-  final private let apiPathLog = "/log_event"
-
-  init(sdkKey: String, user: StatsigUser, store:InternalStore) {
-    self.sdkKey = sdkKey
-    self.user = user
-    self.valueStore = store
-  }
-
-  private func sendRequest(
-    forType: requestType,
-    extraData: Any?,
-    completion: @escaping (Data?, URLResponse?, Error?) -> Void
-  ) {
-    var request = URLRequest(url: URL(string: apiURL + forType.rawValue)!)
-    var params: [String: Any] = [
-      "sdkKey": sdkKey,
-      "user": user.toDictionary(),
-      "statsigMetadata": user.environment.toDictionary()
-    ]
-    switch forType {
-    case .initialize:
-      break
-    case .logEvent:
-      params["events"] = extraData
-      break
+    var sdkKey: String
+    var user: StatsigUser
+    var valueStore: InternalStore
+    
+    final private let apiURL = "https://api.statsig.com/v1"
+    final private let apiPathInitialize = "/initialize"
+    final private let apiPathLog = "/log_event"
+    
+    init(sdkKey: String, user: StatsigUser, store:InternalStore) {
+        self.sdkKey = sdkKey
+        self.user = user
+        self.valueStore = store
     }
-    guard let jsonData = try? JSONSerialization.data(withJSONObject: params) else {
-      completion(nil, nil, nil)
-      return
-    }
-
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = jsonData
-    request.httpMethod = "POST"
-    request.timeoutInterval = 200
-
-    let task = URLSession.shared.dataTask(with: request) { responseData, response, error in
-      completion(responseData, response, error)
-    }
-
-    task.resume()
-  }
-
-  func updateUser(withNewUser: StatsigUser) {
-    self.user = withNewUser
-  }
-
-  func fetchValues(completion: completionBlock) {
-    sendRequest(forType: .initialize, extraData: nil) { responseData, response, error in
-      if error != nil {
-        // TODO: handle better and retry?
-        completion?(error?.localizedDescription ?? "An error occurred during fetching values for the user.")
-        return
-      }
-      guard let httpResponse = response as? HTTPURLResponse,
-            (200...299).contains(httpResponse.statusCode) else {
-        // TODO: handle better and retry?
-        completion?("An error occurred during fetching values for the user. \((response as? HTTPURLResponse)?.statusCode)")
-        return
-      }
-      guard let mime = response?.mimeType, mime == "application/json" else {
-        // TODO: handle better and retry?
-        completion?("Received wrong MIME type for http response!")
-        return
-      }
-
-      let str = String(decoding: responseData!, as: UTF8.self)
-      print("\(str)")
-
-      if let json = try? JSONSerialization.jsonObject(with: responseData!, options: []) {
-        if let json = json as? [String:Any] {
-          
-          self.valueStore.set(forUser: self.user, values: UserValues(data: json))
-          completion?(nil)
-          return
+    
+    private func sendRequest(
+        forType: requestType,
+        extraData: Any?,
+        completion: @escaping (Data?, URLResponse?, Error?) -> Void
+    ) {
+        var request = URLRequest(url: URL(string: apiURL + forType.rawValue)!)
+        var params: [String: Any] = [
+            "sdkKey": sdkKey,
+            "user": user.toDictionary(),
+            "statsigMetadata": user.environment.toDictionary()
+        ]
+        switch forType {
+        case .initialize:
+            break
+        case .logEvent:
+            params["events"] = extraData
+            break
         }
-      }
-      completion?("An error occurred during fetching values for the user.")
-    }
-  }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: params) else {
+            completion(nil, nil, nil)
+            return
+        }
+        
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+        request.httpMethod = "POST"
 
-  func sendEvents(_ events: [Event], completion: completionBlock) {
-    sendRequest(forType: .logEvent, extraData: events.map { $0.toDictionary() }) { responseData, response, error in
-      NSLog("received log response")
-      NSLog("\(response as? HTTPURLResponse)?.statusCode")
-      NSLog(error.debugDescription)
-      if error != nil {
-        // TODO: handle better and retry?
-        completion?(error.debugDescription)
-        return
-      }
-
-      guard let httpResponse = response as? HTTPURLResponse,
-            (200...299).contains(httpResponse.statusCode) else {
-        // TODO: handle better and retry?
-        completion?("An error occurred during sending events to server. \((response as? HTTPURLResponse)?.statusCode)")
-        return
-      }
+        let task = URLSession.shared.dataTask(with: request) { responseData, response, error in
+            DispatchQueue.main.async {
+                completion(responseData, response, error)
+            }
+        }
+        task.resume()
     }
-  }
+    
+    func fetchValues(completion: completionBlock) {
+        var completionClone = completion
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            completionClone?(nil)
+            completionClone = nil
+        }
+        sendRequest(forType: .initialize, extraData: nil) { responseData, response, error in
+            if let error = error {
+                completionClone?(error.localizedDescription)
+                completionClone = nil
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                completionClone?("An error occurred during fetching values for the user. "
+                                    + "\(String(describing: (response as? HTTPURLResponse)?.statusCode))")
+                completionClone = nil
+                return
+            }
+            guard let mime = response?.mimeType, mime == "application/json" else {
+                completionClone?("Received wrong MIME type for http response!")
+                completionClone = nil
+                return
+            }
+
+            let str = String(decoding: responseData!, as: UTF8.self)
+            print("\(str)")
+            
+            if let json = try? JSONSerialization.jsonObject(with: responseData!, options: []) {
+                if let json = json as? [String:Any] {
+                    self.valueStore.set(forUser: self.user, values: UserValues(data: json))
+                    completionClone?(nil)
+                    completionClone = nil
+                    return
+                }
+            }
+            completionClone?("An error occurred during fetching values for the user.")
+            completionClone = nil
+        }
+    }
+    
+    func sendEvents(_ events: [Event], completion: completionBlock) {
+        sendRequest(forType: .logEvent, extraData: events.map { $0.toDictionary() }) { responseData, response, error in
+            if let error = error {
+                completion?(error.localizedDescription)
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                completion?("An error occurred during sending events to server. "
+                            + "\(String(describing: (response as? HTTPURLResponse)?.statusCode))")
+                return
+            }
+        }
+    }
 }

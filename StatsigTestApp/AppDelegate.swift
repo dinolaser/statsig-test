@@ -12,7 +12,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
   let statsigUser =
     StatsigUser(userID: "dloomb#1",
-                name: "Daniel",
                 email: "dloomb@gmail.com",
                 ip: "192.168.1.1",
                 country: "New Zealand",

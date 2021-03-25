@@ -3,8 +3,8 @@ import Foundation
 import UIKit
 
 struct DeviceEnvironment: Codable {
-    let deviceOS: String = "iOS"
-    let sdkVersion: String = "1.0.0"
+    var deviceOS: String = "iOS"
+    var sdkVersion: String = "1.0.0"
     var deviceID: String? { UIDevice.current.identifierForVendor?.uuidString }
     var sessionID: String? { UUID().uuidString }
     var systemVersion: String { UIDevice.current.systemVersion }
